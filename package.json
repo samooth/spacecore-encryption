@@ -1,0 +1,29 @@
+{
+  "name": "hypercore-block-encryption",
+  "version": "0.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "standard && brittle test.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "Block encryption provider for hypercore",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/holepunchto/hypercore-block-encryption.git"
+  },
+  "bugs": {
+    "url": "https://github.com/holepunchto/hypercore-block-encryption/issues"
+  },
+  "homepage": "https://github.com/holepunchto/hypercore-block-encryption#readme",
+  "devDependencies": {
+    "brittle": "^3.12.1",
+    "standard": "^17.1.2"
+  },
+  "dependencies": {
+    "b4a": "^1.6.7",
+    "compact-encoding": "^2.16.0",
+    "sodium-native": "^4.3.3"
+  }
+}
