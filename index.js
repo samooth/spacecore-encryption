@@ -169,7 +169,7 @@ class BlockEncryption extends ReadyResource {
 
   _open () {
     if (this.provider && this.provider instanceof LegacyProvider) return
-    if (this._initialId !== undefined) return this.reload(this._initialId)
+    if (this._initialId !== undefined) return this.load(this._initialId)
   }
 
   async load (id) {
