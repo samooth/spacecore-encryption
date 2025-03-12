@@ -1,29 +1,96 @@
 const sodium = require('sodium-universal')
+const crypto = require('hypercore-crypto')
+const ReadyResource = require('ready-resource')
 const c = require('compact-encoding')
 const b4a = require('b4a')
 
 const VERSION = 0
 
+const HYPERCORE_CAPS = crypto.namespace('hypercore', 6)
+const HYPERCORE_BLOCK_ENCRYPTION = HYPERCORE_CAPS[5]
+
 const nonce = b4a.alloc(sodium.crypto_stream_NONCEBYTES)
 
-class BlockEncryption {
-  constructor (padding, hooks = {}) {
-    this.padding = padding
-    this.seekable = this.padding !== 0
+class LegacyProvider {
+  constructor ({ encryptionKey, hypercoreKey, block = false, compat = true } = {}) {
+    const subKeys = b4a.alloc(2 * sodium.crypto_stream_KEYBYTES)
 
-    this._get = hooks.get
-    this.compat = false
+    this.key = encryptionKey
+    this.blockKey = block ? encryptionKey : subKeys.subarray(0, sodium.crypto_stream_KEYBYTES)
+    this.blindingKey = subKeys.subarray(sodium.crypto_stream_KEYBYTES)
 
-    this.encryptionId = null
-    this.blockKey = null
+    this.padding = 8
+    this.seekable = true
+
+    this.compat = compat
+
+    if (!block) {
+      if (compat) sodium.crypto_generichash_batch(this.blockKey, [encryptionKey], hypercoreKey)
+      else sodium.crypto_generichash_batch(this.blockKey, [HYPERCORE_BLOCK_ENCRYPTION, hypercoreKey, encryptionKey])
+    }
+
+    sodium.crypto_generichash(this.blindingKey, this.blockKey)
   }
 
-  async reload (id) {
-    const key = await this._get(id)
-    if (!key) throw new Error('Unrecognised encryption id')
+  encrypt (index, block, fork) {
+    const padding = block.subarray(0, this.padding)
+    block = block.subarray(this.padding)
 
-    this.encryptionId = id
-    this.blockKey = key
+    c.uint64.encode({ start: 0, end: 8, buffer: padding }, fork)
+    c.uint64.encode({ start: 0, end: 8, buffer: nonce }, index)
+
+    // Zero out any previous padding.
+    nonce.fill(0, 8, 8 + padding.byteLength)
+
+    // Blind the fork ID, possibly risking reusing the nonce on a reorg of the
+    // Hypercore. This is fine as the blinding is best-effort and the latest
+    // fork ID shared on replication anyway.
+    sodium.crypto_stream_xor(
+      padding,
+      padding,
+      nonce,
+      this.blindingKey
+    )
+
+    nonce.set(padding, 8)
+
+    // The combination of a (blinded) fork ID and a block index is unique for a
+    // given Hypercore and is therefore a valid nonce for encrypting the block.
+    sodium.crypto_stream_xor(
+      block,
+      block,
+      nonce,
+      this.blockKey
+    )
+  }
+
+  decrypt (index, block) {
+    const padding = block.subarray(0, this.padding)
+    block = block.subarray(this.padding)
+
+    c.uint64.encode({ start: 0, end: 8, buffer: nonce }, index)
+
+    nonce.set(padding, 8)
+
+    // Decrypt the block using the blinded fork ID.
+    sodium.crypto_stream_xor(
+      block,
+      block,
+      nonce,
+      this.blockKey
+    )
+  }
+}
+
+class EncryptionProvider {
+  constructor (encryptionId, blockKey, host) {
+    this.padding = 8
+
+    this.seekable = this.padding !== 0
+
+    this.encryptionId = encryptionId
+    this.blockKey = blockKey
+    this.host = host
   }
 
   async decrypt (index, block) {
@@ -37,7 +104,7 @@ class BlockEncryption {
 
     const id = c.uint32.decode({ start: 4, end: 8, buffer: padding })
 
-    const key = await this._get(id)
+    const key = await this.host._get(id)
     if (!key) throw new Error('Decryption failed: unknown key')
 
     c.uint64.encode({ start: 0, end: 8, buffer: nonce }, index)
@@ -53,7 +120,6 @@ class BlockEncryption {
   }
 
   encrypt (index, block) {
-    if (this.blockKey === null) throw new Error('No encryption key provided')
     if (this.padding !== 8) throw new Error('Unsupported padding')
 
     const padding = block.subarray(0, this.padding)
@@ -87,6 +153,42 @@ class BlockEncryption {
       nonce,
       this.blockKey
     )
+  }
+}
+
+class BlockEncryption extends ReadyResource {
+  constructor (opts = {}) {
+    super()
+
+    this._get = opts.get
+    this.compat = false
+
+    this.provider = opts.legacy === true ? new LegacyProvider(opts) : null
+    this._initialId = opts.id || null
+  }
+
+  _open () {
+    if (this.provider && this.provider instanceof LegacyProvider) return
+    if (this._initialId !== undefined) return this.reload(this._initialId)
+  }
+
+  async load (id) {
+    const key = await this._get(id)
+    if (!key) throw new Error('Unrecognised encryption id')
+
+    this.provider = new EncryptionProvider(id, key, this)
+  }
+
+  decrypt (index, block) {
+    if (this.provider === null) throw new Error('Encryption has not been loaded')
+
+    return this.provider.decrypt(index, block)
+  }
+
+  encrypt (index, block, fork) {
+    if (this.provider === null) throw new Error('Encryption has not been loaded')
+
+    this.provider.encrypt(index, block, fork)
   }
 }
 
