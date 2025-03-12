@@ -26,9 +26,16 @@ test('basic', async t => {
   e1.set(b1, 8)
   e2.set(b2, 8)
 
-  await block.encrypt(0, 0, e0)
-  await block.encrypt(1, 1, e1)
-  await block.encrypt(2, 2, e2)
+  t.exception(() => block.encrypt(0, e0))
+
+  await block.reload(0)
+  await block.encrypt(0, e0)
+
+  await block.reload(1)
+  await block.encrypt(1, e1)
+
+  await block.reload(2)
+  await block.encrypt(2, e2)
 
   t.is(e0.byteLength, b0.byteLength + 8)
   t.is(e1.byteLength, b1.byteLength + 8)

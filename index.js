@@ -13,6 +13,17 @@ class BlockEncryption {
 
     this._get = hooks.get
     this.compat = false
+
+    this.encryptionId = null
+    this.blockKey = null
+  }
+
+  async reload (id) {
+    const key = await this._get(id)
+    if (!key) throw new Error('Unrecognised encryption id')
+
+    this.encryptionId = id
+    this.blockKey = key
   }
 
   async decrypt (index, block) {
@@ -41,18 +52,16 @@ class BlockEncryption {
     )
   }
 
-  async encrypt (id, index, block) {
+  encrypt (index, block) {
+    if (this.blockKey === null) throw new Error('No encryption key provided')
     if (this.padding !== 8) throw new Error('Unsupported padding')
-
-    const key = await this._get(id)
-    if (!key) throw new Error('Encryption failed: unknown key')
 
     const padding = block.subarray(0, this.padding)
     block = block.subarray(this.padding)
 
     // encode padding
     c.uint32.encode({ start: 0, end: 8, buffer: padding }, VERSION)
-    c.uint32.encode({ start: 4, end: 8, buffer: padding }, id)
+    c.uint32.encode({ start: 4, end: 8, buffer: padding }, this.encryptionId)
 
     c.uint64.encode({ start: 0, end: 8, buffer: nonce }, index)
 
@@ -76,7 +85,7 @@ class BlockEncryption {
       block,
       block,
       nonce,
-      key
+      this.blockKey
     )
   }
 }
