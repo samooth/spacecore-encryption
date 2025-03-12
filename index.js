@@ -86,8 +86,6 @@ class EncryptionProvider {
   constructor (encryptionId, blockKey, host) {
     this.padding = 8
 
-    this.seekable = this.padding !== 0
-
     this.encryptionId = encryptionId
     this.blockKey = blockKey
     this.host = host
@@ -120,6 +118,7 @@ class EncryptionProvider {
   }
 
   encrypt (index, block) {
+    if (this.blockKey === null) throw new Error('No encryption has been loaded')
     if (this.padding !== 8) throw new Error('Unsupported padding')
 
     const padding = block.subarray(0, this.padding)
@@ -163,13 +162,24 @@ class BlockEncryption extends ReadyResource {
     this._get = opts.get
     this.compat = false
 
-    this.provider = opts.legacy === true ? new LegacyProvider(opts) : null
-    this._initialId = opts.id || null
+    this._initialId = opts.id !== undefined ? opts.id : null
+
+    this.provider = opts.legacy === true
+      ? new LegacyProvider(opts)
+      : new EncryptionProvider(this._initialId, null, this)
+  }
+
+  get padding () {
+    return this.provider.padding
+  }
+
+  get seekable () {
+    return this.padding !== 0
   }
 
   _open () {
     if (this.provider && this.provider instanceof LegacyProvider) return
-    if (this._initialId !== undefined) return this.load(this._initialId)
+    if (this._initialId !== null) return this.load(this._initialId)
   }
 
   async load (id) {
@@ -180,15 +190,11 @@ class BlockEncryption extends ReadyResource {
   }
 
   decrypt (index, block) {
-    if (this.provider === null) throw new Error('Encryption has not been loaded')
-
     return this.provider.decrypt(index, block)
   }
 
   encrypt (index, block, fork) {
-    if (this.provider === null) throw new Error('Encryption has not been loaded')
-
-    this.provider.encrypt(index, block, fork)
+    return this.provider.encrypt(index, block, fork)
   }
 }
 
