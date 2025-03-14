@@ -4,10 +4,10 @@ const ReadyResource = require('ready-resource')
 const c = require('compact-encoding')
 const b4a = require('b4a')
 
-const VERSION = 0
-
 const HYPERCORE_CAPS = crypto.namespace('hypercore', 6)
 const HYPERCORE_BLOCK_ENCRYPTION = HYPERCORE_CAPS[5]
+
+const [NS_BLINDING_KEY] = crypto.namespace('hypercore-encryption', 1)
 
 const nonce = b4a.alloc(sodium.crypto_stream_NONCEBYTES)
 
@@ -19,8 +19,8 @@ class LegacyProvider {
     this.blockKey = block ? encryptionKey : subKeys.subarray(0, sodium.crypto_stream_KEYBYTES)
     this.blindingKey = subKeys.subarray(sodium.crypto_stream_KEYBYTES)
 
+    this.isBlock = !!block
     this.padding = 8
-    this.seekable = true
 
     this.compat = compat
 
@@ -83,22 +83,22 @@ class LegacyProvider {
 }
 
 class EncryptionProvider {
-  constructor (encryptionId, blockKey, host) {
-    this.padding = 8
+  constructor (id, key, host) {
+    this.padding = 16
+    this.isBlock = true
 
-    this.encryptionId = encryptionId
-    this.blockKey = blockKey
+    this.id = id
+    this.key = key
     this.host = host
+
+    this.blindingKey = key ? deriveBlindingKey(id, key) : null
   }
 
   async decrypt (index, block) {
-    if (this.padding !== 8) throw new Error('Unsupported padding')
+    if (this.padding !== 16) throw new Error('Unsupported padding')
 
     const padding = block.subarray(0, this.padding)
     block = block.subarray(this.padding)
-
-    const version = c.uint32.decode({ start: 0, end: 8, buffer: padding })
-    if (version > VERSION) throw new Error('Unsupported version')
 
     const id = c.uint32.decode({ start: 4, end: 8, buffer: padding })
 
@@ -117,30 +117,23 @@ class EncryptionProvider {
     )
   }
 
-  encrypt (index, block) {
-    if (this.blockKey === null) throw new Error('No encryption has been loaded')
-    if (this.padding !== 8) throw new Error('Unsupported padding')
+  encrypt (index, block, fork) {
+    if (this.key === null) throw new Error('No encryption has been loaded')
+    if (this.padding !== 16) throw new Error('Unsupported padding')
 
     const padding = block.subarray(0, this.padding)
     block = block.subarray(this.padding)
 
+    sodium.crypto_generichash(padding, block, this.blindingKey)
+
     // encode padding
-    c.uint32.encode({ start: 0, end: 8, buffer: padding }, VERSION)
-    c.uint32.encode({ start: 4, end: 8, buffer: padding }, this.encryptionId)
+    c.uint32.encode({ start: 0, end: 4, buffer: padding }, this.id)
+    c.uint32.encode({ start: 4, end: 8, buffer: padding }, fork)
 
     c.uint64.encode({ start: 0, end: 8, buffer: nonce }, index)
 
     // Zero out any previous padding.
     nonce.fill(0, 8, 8 + padding.byteLength)
-
-    // TODO: don't blind for now: need a static blinding key a we don't know the encryptionId up front
-
-    // sodium.crypto_stream_xor(
-    //   padding,
-    //   padding,
-    //   nonce,
-    //   this.blindingKey
-    // )
 
     nonce.set(padding, 8)
 
@@ -150,12 +143,12 @@ class EncryptionProvider {
       block,
       block,
       nonce,
-      this.blockKey
+      this.key
     )
   }
 }
 
-class BlockEncryption extends ReadyResource {
+class HypercoreEncryption extends ReadyResource {
   constructor (opts = {}) {
     super()
 
@@ -167,6 +160,10 @@ class BlockEncryption extends ReadyResource {
     this.provider = opts.legacy === true
       ? new LegacyProvider(opts)
       : new EncryptionProvider(this._initialId, null, this)
+  }
+
+  get legacy () {
+    return this.provider instanceof LegacyProvider
   }
 
   get padding () {
@@ -189,13 +186,23 @@ class BlockEncryption extends ReadyResource {
     this.provider = new EncryptionProvider(id, key, this)
   }
 
-  decrypt (index, block) {
+  async decrypt (index, block) {
+    if (!this.opened) await this.ready()
     return this.provider.decrypt(index, block)
   }
 
-  encrypt (index, block, fork) {
+  async encrypt (index, block, fork) {
+    if (!this.opened) await this.ready()
     return this.provider.encrypt(index, block, fork)
   }
 }
 
-module.exports = BlockEncryption
+module.exports = HypercoreEncryption
+
+function deriveBlindingKey (id, encryptionKey) {
+  const idBuffer = c.encode(c.uint, id)
+  const key = b4a.alloc(sodium.crypto_generichash_KEYBYTES)
+  sodium.crypto_generichash_batch(key, [NS_BLINDING_KEY, idBuffer], encryptionKey)
+
+  return key
+}
