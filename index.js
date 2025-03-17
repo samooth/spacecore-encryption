@@ -127,10 +127,10 @@ class EncryptionProvider {
     )
   }
 
-  // reset padding state
+  // reset legacy state
   _resetLegacyPadding (padding) {
     nonce.fill(0, this.padding)
-    this._blind(padding)
+    this._blind(padding) // we wrote 8 bytes of the legacy block while unblinding
   }
 
   async decrypt (index, raw) {
