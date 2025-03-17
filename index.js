@@ -100,7 +100,8 @@ class EncryptionProvider {
     const padding = block.subarray(0, this.padding)
     block = block.subarray(this.padding)
 
-    const id = c.uint32.decode({ start: 4, end: 8, buffer: padding })
+    const id = c.uint32.decode({ start: 0, end: 4, buffer: padding })
+    // const fork = c.uint32.decode({ start: 4, end: 8, buffer: padding })
 
     const key = await this.host._get(id)
     if (!key) throw new Error('Decryption failed: unknown key')
@@ -128,7 +129,7 @@ class EncryptionProvider {
 
     // encode padding
     c.uint32.encode({ start: 0, end: 4, buffer: padding }, this.id)
-    c.uint32.encode({ start: 4, end: 8, buffer: padding }, fork)
+    // c.uint32.encode({ start: 4, end: 8, buffer: padding }, fork)
 
     c.uint64.encode({ start: 0, end: 8, buffer: nonce }, index)
 
