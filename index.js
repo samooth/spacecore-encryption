@@ -1,9 +1,12 @@
 const sodium = require('sodium-universal')
+const crypto = require('hypercore-crypto')
 const ReadyResource = require('ready-resource')
 const c = require('compact-encoding')
 const b4a = require('b4a')
 
-const LEGACY_KEY_ID = 0,
+const [NS_HASH_KEY] = crypto.namespace('hypercore-block-encryption', 1)
+
+const LEGACY_KEY_ID = 0
 const BYPASS_KEY_ID = 0xffffffff
 
 const nonce = b4a.alloc(sodium.crypto_stream_NONCEBYTES)
@@ -142,7 +145,7 @@ class EncryptionProvider {
 
     const id = this._decodeKeyId(padding)
 
-    const key = await this.host._get(id)
+    const key = await this.host.getBlockKey(id)
     if (!key) throw new Error('Decryption failed: unknown key')
 
     // handle special cases
@@ -216,7 +219,7 @@ class HypercoreEncryption extends ReadyResource {
   constructor (opts = {}) {
     super()
 
-    this._get = opts.get
+    this.getBlockKey = opts.get
     this.legacy = opts.legacy === true || opts.id === 0
     this.compat = false
 
@@ -239,7 +242,7 @@ class HypercoreEncryption extends ReadyResource {
       return this.load(LegacyProvider.id)
     }
 
-    const legacyKey = await this._get(LEGACY_KEY_ID)
+    const legacyKey = await this.getBlockKey(LEGACY_KEY_ID)
     if (!legacyKey) throw new Error('Blinding key must be provided')
 
     this.blindingKey = b4a.allocUnsafe(sodium.crypto_stream_KEYBYTES)
@@ -253,7 +256,7 @@ class HypercoreEncryption extends ReadyResource {
   }
 
   async load (id) {
-    const key = await this._get(id)
+    const key = await this.getBlockKey(id)
     if (!key) throw new Error('Unrecognised encryption id')
 
     switch (id) {
