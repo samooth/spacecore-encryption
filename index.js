@@ -1,17 +1,18 @@
 const sodium = require('sodium-universal')
-const crypto = require('hypercore-crypto')
 const ReadyResource = require('ready-resource')
 const c = require('compact-encoding')
 const b4a = require('b4a')
 
 const {
   NS_LEGACY_ENCRYPTION,
-  NS_BLINDING_KEY,
+  NS_HASH_KEY,
   LEGACY_KEY_ID,
+  BLINDING_KEY_ID,
   BYPASS_KEY_ID
 } = require('./lib/caps.js')
 
 const nonce = b4a.alloc(sodium.crypto_stream_NONCEBYTES)
+const blindingNonce = b4a.alloc(sodium.crypto_stream_NONCEBYTES)
 
 class LegacyProvider {
   static id = LEGACY_KEY_ID
@@ -45,7 +46,7 @@ class LegacyProvider {
     c.uint64.encode({ start: 0, end: 8, buffer: nonce }, index)
 
     // Zero out any previous padding.
-    nonce.fill(0, 8, 8 + padding.byteLength)
+    nonce.fill(0, 8)
 
     // Blind the fork ID, possibly risking reusing the nonce on a reorg of the
     // Hypercore. This is fine as the blinding is best-effort and the latest
@@ -70,10 +71,6 @@ class LegacyProvider {
   }
 
   decrypt (index, block) {
-    return LegacyProvider.decrypt(index, block, this.blockKey)
-  }
-
-  static decrypt (index, block, key) {
     const padding = block.subarray(0, this.padding)
     block = block.subarray(this.padding)
 
@@ -81,6 +78,10 @@ class LegacyProvider {
 
     nonce.set(padding, 8)
 
+    return LegacyProvider.decrypt(index, block, this.blockKey)
+  }
+
+  static decrypt (index, block, key) {
     // Decrypt the block using the blinded fork ID.
     sodium.crypto_stream_xor(
       block,
@@ -92,46 +93,92 @@ class LegacyProvider {
 }
 
 class EncryptionProvider {
-  constructor (id, key, host) {
+  constructor (host, id, key) {
     this.padding = 16
     this.isBlock = true
 
-    this.id = id
-    this.key = key
     this.host = host
 
-    this.blindingKey = key ? deriveBlindingKey(id, key) : null
+    this.id = null
+    this.key = null
+    this.hashKey = null
+    this.blindingKey = host.blindingKey
+
+    this.update(id, key)
   }
 
-  async decrypt (index, block) {
+  update (id, key) {
+    this.id = id
+    this.key = key
+
+    if (key) this.hashKey = deriveHashKey(id, key)
+  }
+
+  _decodeKeyId (padding) {
+    this._blind(padding) // unblind
+
+    return c.uint32.deocde({ start: 0, end: 4, buffer: padding })
+  }
+
+  _setNonce (index) {
+    c.uint64.encode({ start: 0, end: 8, buffer: nonce }, index)
+    c.uint64.encode({ start: 0, end: 8, buffer: blindingNonce }, index)
+
+    // Zero out any previous padding.
+    nonce.fill(0, 8)
+    blindingNonce.fill(0, 8)
+  }
+
+  // blind the key id and fork id, possibly risking reusing the nonce on a reorg.
+  // chance is minimal since requires xsalsa20 collision of { keyId, forkId }
+  _blind (padding) {
+    sodium.crypto_stream_xor(
+      padding,
+      padding,
+      blindingNonce,
+      this.blindingKey
+    )
+  }
+
+  // reset padding state
+  _resetLegacy (padding) {
+    nonce.fill(0, this.padding)
+    this._blind(padding)
+  }
+
+  async decrypt (index, raw) {
     if (this.padding !== 16) throw new Error('Unsupported padding')
 
-    const padding = block.subarray(0, this.padding)
-    block = block.subarray(this.padding)
+    const padding = raw.subarray(0, this.padding)
+    const block = raw.subarray(this.padding)
 
-    const id = c.uint32.decode({ start: 0, end: 4, buffer: padding })
-    // const fork = c.uint32.decode({ start: 4, end: 8, buffer: padding })
+    this._setNonce(index)
 
-    const key = await this.host._get(id)
-    if (!key) throw new Error('Decryption failed: unknown key')
+    nonce.set(padding, 8)
+
+    const id = this._decodeKeyId(padding)
+
+    const opts = await this.host._get(id)
+    if (!opts) throw new Error('Decryption failed: unknown key')
 
     // handle special cases
     switch (id) {
-      case LegacyProvider.id:
-        return LegacyProvider.decrypt(index, block, key)
+      case LegacyProvider.id: {
+        this._resetLegacy(padding)
+        const block = raw.subarray(LegacyProvider.padding)
+
+        return LegacyProvider.decrypt(index, block, opts.encryptionKey)
+      }
 
       case BypassProvider.id:
         return block
     }
 
-    c.uint64.encode({ start: 0, end: 8, buffer: nonce }, index)
-    nonce.set(padding, 8)
-
     return sodium.crypto_stream_xor(
       block,
       block,
       nonce,
-      key
+      opts.key
     )
   }
 
@@ -142,16 +189,14 @@ class EncryptionProvider {
     const padding = block.subarray(0, this.padding)
     block = block.subarray(this.padding)
 
-    sodium.crypto_generichash(padding, block, this.blindingKey)
+    sodium.crypto_generichash(padding, block)
 
     // encode padding
     c.uint32.encode({ start: 0, end: 4, buffer: padding }, this.id)
-    // c.uint32.encode({ start: 4, end: 8, buffer: padding }, fork)
+    c.uint32.encode({ start: 4, end: 8, buffer: padding }, fork)
 
-    c.uint64.encode({ start: 0, end: 8, buffer: nonce }, index)
-
-    // Zero out any previous padding.
-    nonce.fill(0, 8, 8 + padding.byteLength)
+    this._setNonce(index)
+    this._blind(padding) // blind
 
     nonce.set(padding, 8)
 
@@ -188,49 +233,61 @@ class HypercoreEncryption extends ReadyResource {
     super()
 
     this._get = opts.get
+    this.legacy = opts.legacy === true || opts.id === 0
     this.compat = false
 
+    this.blindingKey = null
+    this.provider = null
+
     this._initialId = opts.id !== undefined ? opts.id : null
-
-    this.provider = opts.legacy === true
-      ? new LegacyProvider(opts)
-      : new EncryptionProvider(this._initialId, null, this)
-  }
-
-  get legacy () {
-    return this.provider instanceof LegacyProvider
   }
 
   get padding () {
-    return this.provider.padding
+    return this.provider ? this.provider.padding : 0
   }
 
   get seekable () {
     return this.padding !== 0
   }
 
-  _open () {
-    if (this.provider && this.provider instanceof LegacyProvider) return
-    if (this._initialId !== null) return this.load(this._initialId)
+  async _open () {
+    if (this.legacy) {
+      return this.load(LegacyProvider.id)
+    }
+
+    const blindingKey = await this._get(BLINDING_KEY_ID)
+    if (!blindingKey) throw new Error('Blinding key must be provided')
+
+    this.blindingKey = blindingKey
+
+    const id = this._initialId
+    if (id !== null) {
+      this._initialId = null
+      return this.load(id)
+    }
   }
 
   async load (id) {
-    const key = await this._get(id)
-    if (!key) throw new Error('Unrecognised encryption id')
+    const opts = await this._get(id)
+    if (!opts) throw new Error('Unrecognised encryption id')
 
     switch (id) {
       case LegacyProvider.id: {
-        this.provider = new LegacyProvider(id, key, this)
+        this.provider = new LegacyProvider(opts)
         break
       }
 
       case BypassProvider.id: {
-        this.provider = new BypassProvider(key, this)
+        this.provider = new BypassProvider(this, opts.key)
         break
       }
 
       default: {
-        this.provider = new EncryptionProvider(id, key, this)
+        if (this.provider && this.provider instanceof EncryptionProvider) {
+          return this.provider.update(id, opts.key)
+        }
+
+        this.provider = new EncryptionProvider(this, id, opts.key)
         break
       }
     }
@@ -249,10 +306,10 @@ class HypercoreEncryption extends ReadyResource {
 
 module.exports = HypercoreEncryption
 
-function deriveBlindingKey (id, encryptionKey) {
+function deriveHashKey (id, encryptionKey) {
   const idBuffer = c.encode(c.uint, id)
   const key = b4a.alloc(sodium.crypto_generichash_KEYBYTES)
-  sodium.crypto_generichash_batch(key, [NS_BLINDING_KEY, idBuffer], encryptionKey)
+  sodium.crypto_generichash_batch(key, [NS_HASH_KEY, idBuffer], encryptionKey)
 
   return key
 }

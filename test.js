@@ -1,18 +1,26 @@
 const test = require('brittle')
+const crypto = require('hypercore-crypto')
 const b4a = require('b4a')
-
-const { NS_LEGACY_ENCRYPTION } = require('./lib/caps.js')
 
 const BlockEncryption = require('./')
 
 test('basic', async t => {
+  const blindingKey = b4a.alloc(32, b4a.from([0x12, 0x34]))
+
   const block = new BlockEncryption({
     async get (id) {
       await Promise.resolve()
-      return b4a.alloc(32, id)
+      if (id === -1) return blindingKey
+      return { key: b4a.alloc(32, id) }
     }
   })
 
+  await block.ready()
+
+  t.is(block.padding, 0)
+  t.absent(block.seekable)
+
+  await block.load(1)
   t.is(block.padding, 16)
   t.ok(block.seekable)
 
@@ -55,12 +63,19 @@ test('basic', async t => {
 })
 
 test('legacy', async t => {
+  const legacyOpts = {
+    block: true,
+    encryptionKey: b4a.alloc(32, 0)
+  }
+
   const block = new BlockEncryption({
     legacy: true,
-    block: true,
-    encryptionKey: b4a.alloc(32, 1),
-    hypercoreKey: b4a.alloc(32, 2)
+    get (id) {
+      if (id === 0) return legacyOpts
+    }
   })
+
+  await block.ready()
 
   const b0 = b4a.alloc(32, 0)
   const b1 = b4a.alloc(32, 1)
@@ -95,23 +110,31 @@ test('legacy', async t => {
 })
 
 test('encryption provider can decrypt legacy', async t => {
-  const encryptionKey = b4a.alloc(32, 0)
-  const hypercoreKey = b4a.alloc(32, 0xff)
+  const legacyOpts = {
+    block: true,
+    encryptionKey: b4a.alloc(32, 0)
+  }
+
+  const blindingKey = crypto.hash(legacyOpts.encryptionKey)
 
   const legacy = new BlockEncryption({
     legacy: true,
-    block: true,
-    encryptionKey,
-    hypercoreKey
+    get () { return legacyOpts }
   })
 
   const block = new BlockEncryption({
     id: 1,
     async get (id) {
-      if (id === 0) return getLegacyKey(encryptionKey, hypercoreKey)
-      return b4a.alloc(32, id)
+      await Promise.resolve()
+      if (id === -1) return blindingKey
+      if (id === 0) return legacyOpts
+      return { key: b4a.alloc(32, id) }
     }
   })
+
+  await legacy.ready()
+
+  await block.ready()
 
   const b0 = b4a.alloc(32, 0)
   const b1 = b4a.alloc(32, 1)
@@ -128,9 +151,9 @@ test('encryption provider can decrypt legacy', async t => {
   e1.set(b1, legacy.padding)
   e2.set(b2, legacy.padding)
 
-  legacy.encrypt(0, e0, 0)
-  legacy.encrypt(1, e1, 1)
-  legacy.encrypt(2, e2, 2)
+  legacy.encrypt(0, e0, 0) // fork has to be pegged to 0
+  legacy.encrypt(1, e1, 0)
+  legacy.encrypt(2, e2, 0)
 
   // updated scheme
   e3.set(b3, block.padding)
@@ -141,22 +164,13 @@ test('encryption provider can decrypt legacy', async t => {
   t.is(e1.byteLength, b1.byteLength + 8)
   t.is(e2.byteLength, b2.byteLength + 8)
 
-  block.decrypt(0, e0)
-  block.decrypt(1, e1)
-  block.decrypt(2, e2)
-  block.decrypt(3, e3)
+  await block.decrypt(0, e0)
+  await block.decrypt(1, e1)
+  await block.decrypt(2, e2)
+  await block.decrypt(3, e3)
 
   t.alike(e0.subarray(legacy.padding), b0)
   t.alike(e1.subarray(legacy.padding), b1)
   t.alike(e2.subarray(legacy.padding), b2)
   t.alike(e3.subarray(block.padding), b3)
 })
-
-function getLegacyKey (encryptionKey, hypercoreKey, compat = false) {
-  const blockKey = b4a.alloc(sodium.crypto_stream_KEYBYTES)
-
-  if (compat) sodium.crypto_generichash_batch(blockKey, [encryptionKey], hypercoreKey)
-  else sodium.crypto_generichash_batch(blockKey, [NS_LEGACY_ENCRYPTION, hypercoreKey, encryptionKey])
-
-  return blockKey
-}
