@@ -9,8 +9,8 @@ const [NS_BLOCK_KEY, NS_HASH_KEY] = crypto.namespace('hypercore-block-encryption
 const LEGACY_KEY_ID = 0
 const BYPASS_KEY_ID = 0xffffffff
 
-const nonce = b4a.alloc(sodium.crypto_stream_NONCEBYTES)
-const blindingNonce = b4a.alloc(sodium.crypto_stream_NONCEBYTES)
+const nonce = b4a.allocUnsafe(sodium.crypto_stream_NONCEBYTES)
+const blindingNonce = b4a.allocUnsafe(sodium.crypto_stream_NONCEBYTES)
 
 class LegacyProvider {
   static id = LEGACY_KEY_ID
@@ -306,7 +306,7 @@ function getBlockKey (hypercoreKey, encryptionKey) {
 
 function deriveHashKey (id, encryptionKey) {
   const idBuffer = c.encode(c.uint, id)
-  const key = b4a.alloc(sodium.crypto_generichash_KEYBYTES)
+  const key = b4a.allocUnsafe(sodium.crypto_generichash_KEYBYTES)
   sodium.crypto_generichash_batch(key, [NS_HASH_KEY, idBuffer], encryptionKey)
 
   return key
