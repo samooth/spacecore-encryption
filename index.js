@@ -16,8 +16,9 @@ class LegacyProvider {
   static id = LEGACY_KEY_ID
   static padding = 8
 
-  constructor (key) {
-    this.blockKey = key
+  constructor (encryptionKey, blockKey) {
+    this.encryptionKey = encryptionKey
+    this.blockKey = blockKey
     this.blindingKey = b4a.allocUnsafe(sodium.crypto_stream_KEYBYTES)
 
     this.padding = LegacyProvider.padding
@@ -216,17 +217,18 @@ class BypassProvider extends EncryptionProvider {
 }
 
 class HypercoreEncryption extends ReadyResource {
+  static KEYBYTES = sodium.crypto_stream_KEYBYTES
+
   constructor (opts = {}) {
     super()
 
     this.getBlockKey = opts.get
-    this.legacy = opts.legacy === true || opts.id === 0
     this.compat = false
 
     this.blindingKey = null
     this.provider = null
 
-    this._initialId = opts.id !== undefined ? opts.id : null
+    this.keyId = opts.id !== undefined ? opts.id : null
   }
 
   get padding () {
@@ -237,8 +239,12 @@ class HypercoreEncryption extends ReadyResource {
     return this.padding !== 0
   }
 
+  get encryptionKey () {
+    return this.provider.blockKey
+  }
+
   async _open () {
-    if (this.legacy) {
+    if (this.keyId === LegacyProvider.id) {
       return this.load(LegacyProvider.id)
     }
 
@@ -248,16 +254,14 @@ class HypercoreEncryption extends ReadyResource {
     this.blindingKey = b4a.allocUnsafe(sodium.crypto_stream_KEYBYTES)
     sodium.crypto_generichash(this.blindingKey, legacyKey)
 
-    const id = this._initialId
-    if (id !== null) {
-      this._initialId = null
-      return this.load(id)
-    }
+    if (this.keyId !== null) return this.load(this.keyId)
   }
 
   async load (id) {
     const key = await this.getBlockKey(id)
     if (!key) throw new Error('Unrecognised encryption id')
+
+    this.keyId = id
 
     switch (id) {
       case LegacyProvider.id: {
@@ -293,6 +297,10 @@ class HypercoreEncryption extends ReadyResource {
 
   static getBlockKey (hypercoreKey, encryptionKey) {
     return getBlockKey(hypercoreKey, encryptionKey)
+  }
+
+  static createLegacyProvider (encryptionKey, blockKey) {
+    return new LegacyProvider(encryptionKey, blockKey)
   }
 }
 
