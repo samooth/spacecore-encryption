@@ -211,7 +211,7 @@ class BypassProvider extends EncryptionProvider {
 
     // encode padding
     c.uint32.encode({ start: 0, end: 4, buffer: padding }, this.id)
-    padding.fill(0, 4, padding.byteLength)
+    this._blind(padding) // blind
   }
 }
 
