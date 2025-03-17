@@ -4,7 +4,7 @@ const ReadyResource = require('ready-resource')
 const c = require('compact-encoding')
 const b4a = require('b4a')
 
-const [NS_HASH_KEY] = crypto.namespace('hypercore-block-encryption', 1)
+const [NS_BLOCK_KEY, NS_HASH_KEY] = crypto.namespace('hypercore-block-encryption', 2)
 
 const LEGACY_KEY_ID = 0
 const BYPASS_KEY_ID = 0xffffffff
@@ -290,9 +290,19 @@ class HypercoreEncryption extends ReadyResource {
     if (!this.opened) await this.ready()
     return this.provider.encrypt(index, block, fork)
   }
+
+  static getBlockKey (hypercoreKey, encryptionKey) {
+    return getBlockKey(hypercoreKey, encryptionKey)
+  }
 }
 
 module.exports = HypercoreEncryption
+
+function getBlockKey (hypercoreKey, encryptionKey) {
+  const key = b4a.allocUnsafe(sodium.crypto_stream_KEYBYTES)
+  sodium.crypto_generichash_batch(key, [NS_BLOCK_KEY, hypercoreKey, encryptionKey])
+  return key
+}
 
 function deriveHashKey (id, encryptionKey) {
   const idBuffer = c.encode(c.uint, id)
