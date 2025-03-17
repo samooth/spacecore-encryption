@@ -155,7 +155,7 @@ class EncryptionProvider {
 
     nonce.set(padding, 8)
 
-    // The combination of a (blinded) fork ID and a block index is unique for a
+    // The combination of a index and a fork id and block hash is unique for a
     // given Hypercore and is therefore a valid nonce for encrypting the block.
     sodium.crypto_stream_xor(
       block,
