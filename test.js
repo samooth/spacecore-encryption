@@ -1,6 +1,8 @@
 const test = require('brittle')
 const b4a = require('b4a')
 
+const { NS_LEGACY_ENCRYPTION } = require('./lib/caps.js')
+
 const BlockEncryption = require('./')
 
 test('basic', async t => {
@@ -30,13 +32,13 @@ test('basic', async t => {
 
   t.exception(() => block.encrypt(0, e0))
 
-  await block.load(0)
+  await block.load(1)
   await block.encrypt(0, e0, 0)
 
-  await block.load(1)
+  await block.load(2)
   await block.encrypt(1, e1, 1)
 
-  await block.load(2)
+  await block.load(3)
   await block.encrypt(2, e2, 2)
 
   t.is(e0.byteLength, b0.byteLength + padding)
@@ -91,3 +93,70 @@ test('legacy', async t => {
   t.alike(e1.subarray(8), b1)
   t.alike(e2.subarray(8), b2)
 })
+
+test('encryption provider can decrypt legacy', async t => {
+  const encryptionKey = b4a.alloc(32, 0)
+  const hypercoreKey = b4a.alloc(32, 0xff)
+
+  const legacy = new BlockEncryption({
+    legacy: true,
+    block: true,
+    encryptionKey,
+    hypercoreKey
+  })
+
+  const block = new BlockEncryption({
+    id: 1,
+    async get (id) {
+      if (id === 0) return getLegacyKey(encryptionKey, hypercoreKey)
+      return b4a.alloc(32, id)
+    }
+  })
+
+  const b0 = b4a.alloc(32, 0)
+  const b1 = b4a.alloc(32, 1)
+  const b2 = b4a.alloc(32, 2)
+  const b3 = b4a.alloc(32, 3)
+
+  const e0 = b4a.alloc(32 + legacy.padding)
+  const e1 = b4a.alloc(32 + legacy.padding)
+  const e2 = b4a.alloc(32 + legacy.padding)
+  const e3 = b4a.alloc(32 + block.padding)
+
+  // legacy scheme
+  e0.set(b0, legacy.padding)
+  e1.set(b1, legacy.padding)
+  e2.set(b2, legacy.padding)
+
+  legacy.encrypt(0, e0, 0)
+  legacy.encrypt(1, e1, 1)
+  legacy.encrypt(2, e2, 2)
+
+  // updated scheme
+  e3.set(b3, block.padding)
+
+  block.encrypt(3, e3, 3)
+
+  t.is(e0.byteLength, b0.byteLength + 8)
+  t.is(e1.byteLength, b1.byteLength + 8)
+  t.is(e2.byteLength, b2.byteLength + 8)
+
+  block.decrypt(0, e0)
+  block.decrypt(1, e1)
+  block.decrypt(2, e2)
+  block.decrypt(3, e3)
+
+  t.alike(e0.subarray(legacy.padding), b0)
+  t.alike(e1.subarray(legacy.padding), b1)
+  t.alike(e2.subarray(legacy.padding), b2)
+  t.alike(e3.subarray(block.padding), b3)
+})
+
+function getLegacyKey (encryptionKey, hypercoreKey, compat = false) {
+  const blockKey = b4a.alloc(sodium.crypto_stream_KEYBYTES)
+
+  if (compat) sodium.crypto_generichash_batch(blockKey, [encryptionKey], hypercoreKey)
+  else sodium.crypto_generichash_batch(blockKey, [NS_LEGACY_ENCRYPTION, hypercoreKey, encryptionKey])
+
+  return blockKey
+}

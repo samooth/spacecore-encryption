@@ -4,14 +4,19 @@ const ReadyResource = require('ready-resource')
 const c = require('compact-encoding')
 const b4a = require('b4a')
 
-const HYPERCORE_CAPS = crypto.namespace('hypercore', 6)
-const HYPERCORE_BLOCK_ENCRYPTION = HYPERCORE_CAPS[5]
-
-const [NS_BLINDING_KEY] = crypto.namespace('hypercore-encryption', 1)
+const {
+  NS_LEGACY_ENCRYPTION,
+  NS_BLINDING_KEY,
+  LEGACY_KEY_ID,
+  BYPASS_KEY_ID
+} = require('./lib/caps.js')
 
 const nonce = b4a.alloc(sodium.crypto_stream_NONCEBYTES)
 
 class LegacyProvider {
+  static id = LEGACY_KEY_ID
+  static padding = 8
+
   constructor ({ encryptionKey, hypercoreKey, block = false, compat = true } = {}) {
     const subKeys = b4a.alloc(2 * sodium.crypto_stream_KEYBYTES)
 
@@ -20,13 +25,13 @@ class LegacyProvider {
     this.blindingKey = subKeys.subarray(sodium.crypto_stream_KEYBYTES)
 
     this.isBlock = !!block
-    this.padding = 8
+    this.padding = LegacyProvider.padding
 
     this.compat = compat
 
     if (!block) {
       if (compat) sodium.crypto_generichash_batch(this.blockKey, [encryptionKey], hypercoreKey)
-      else sodium.crypto_generichash_batch(this.blockKey, [HYPERCORE_BLOCK_ENCRYPTION, hypercoreKey, encryptionKey])
+      else sodium.crypto_generichash_batch(this.blockKey, [NS_LEGACY_ENCRYPTION, hypercoreKey, encryptionKey])
     }
 
     sodium.crypto_generichash(this.blindingKey, this.blockKey)
@@ -65,6 +70,10 @@ class LegacyProvider {
   }
 
   decrypt (index, block) {
+    return LegacyProvider.decrypt(index, block, this.blockKey)
+  }
+
+  static decrypt (index, block, key) {
     const padding = block.subarray(0, this.padding)
     block = block.subarray(this.padding)
 
@@ -77,7 +86,7 @@ class LegacyProvider {
       block,
       block,
       nonce,
-      this.blockKey
+      key
     )
   }
 }
@@ -106,8 +115,16 @@ class EncryptionProvider {
     const key = await this.host._get(id)
     if (!key) throw new Error('Decryption failed: unknown key')
 
-    c.uint64.encode({ start: 0, end: 8, buffer: nonce }, index)
+    // handle special cases
+    switch (id) {
+      case LegacyProvider.id:
+        return LegacyProvider.decrypt(index, block, key)
 
+      case BypassProvider.id:
+        return block
+    }
+
+    c.uint64.encode({ start: 0, end: 8, buffer: nonce }, index)
     nonce.set(padding, 8)
 
     return sodium.crypto_stream_xor(
@@ -149,6 +166,23 @@ class EncryptionProvider {
   }
 }
 
+class BypassProvider extends EncryptionProvider {
+  static id = BYPASS_KEY_ID
+
+  constructor (key, host) {
+    super(BypassProvider.id, key, host)
+  }
+
+  encrypt (index, block) {
+    const padding = block.subarray(0, this.padding)
+    block = block.subarray(this.padding)
+
+    // encode padding
+    c.uint32.encode({ start: 0, end: 4, buffer: padding }, this.id)
+    padding.fill(0, 4, padding.byteLength)
+  }
+}
+
 class HypercoreEncryption extends ReadyResource {
   constructor (opts = {}) {
     super()
@@ -184,7 +218,22 @@ class HypercoreEncryption extends ReadyResource {
     const key = await this._get(id)
     if (!key) throw new Error('Unrecognised encryption id')
 
-    this.provider = new EncryptionProvider(id, key, this)
+    switch (id) {
+      case LegacyProvider.id: {
+        this.provider = new LegacyProvider(id, key, this)
+        break
+      }
+
+      case BypassProvider.id: {
+        this.provider = new BypassProvider(key, this)
+        break
+      }
+
+      default: {
+        this.provider = new EncryptionProvider(id, key, this)
+        break
+      }
+    }
   }
 
   async decrypt (index, block) {
