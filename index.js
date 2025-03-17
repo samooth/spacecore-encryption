@@ -26,6 +26,10 @@ class LegacyProvider {
     sodium.crypto_generichash(this.blindingKey, this.blockKey)
   }
 
+  ready () {
+    // api compat
+  }
+
   encrypt (index, block, fork) {
     const padding = block.subarray(0, this.padding)
     block = block.subarray(this.padding)
@@ -46,7 +50,7 @@ class LegacyProvider {
       this.blindingKey
     )
 
-    nonce.set(padding, 8)
+    nonce.set(padding, 8, 8 + padding.byteLength)
 
     // The combination of a (blinded) fork ID and a block index is unique for a
     // given Hypercore and is therefore a valid nonce for encrypting the block.
@@ -64,7 +68,8 @@ class LegacyProvider {
 
     c.uint64.encode({ start: 0, end: 8, buffer: nonce }, index)
 
-    nonce.set(padding, 8)
+    nonce.set(padding, 8, 8 + padding.byteLength)
+    nonce.fill(0, 8 + padding.byteLength)
 
     return LegacyProvider.decrypt(index, block, this.blockKey)
   }
@@ -162,7 +167,7 @@ class EncryptionProvider {
         return block
     }
 
-    return sodium.crypto_stream_xor(
+    sodium.crypto_stream_xor(
       block,
       block,
       nonce,
