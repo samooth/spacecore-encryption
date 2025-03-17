@@ -11,7 +11,7 @@ test('basic', async t => {
     async get (id) {
       await Promise.resolve()
       if (id === -1) return blindingKey
-      return { key: b4a.alloc(32, id) }
+      return b4a.alloc(32, id)
     }
   })
 
@@ -63,16 +63,10 @@ test('basic', async t => {
 })
 
 test('legacy', async t => {
-  const legacyOpts = {
-    block: true,
-    encryptionKey: b4a.alloc(32, 0)
-  }
-
+  const legacyKey = b4a.alloc(32, 0)
   const block = new BlockEncryption({
     legacy: true,
-    get (id) {
-      if (id === 0) return legacyOpts
-    }
+    get () { return legacyKey }
   })
 
   await block.ready()
@@ -110,16 +104,12 @@ test('legacy', async t => {
 })
 
 test('encryption provider can decrypt legacy', async t => {
-  const legacyOpts = {
-    block: true,
-    encryptionKey: b4a.alloc(32, 0)
-  }
-
-  const blindingKey = crypto.hash(legacyOpts.encryptionKey)
+  const legacyKey = b4a.alloc(32, 0)
+  const blindingKey = crypto.hash(legacyKey)
 
   const legacy = new BlockEncryption({
     legacy: true,
-    get () { return legacyOpts }
+    get () { return legacyKey }
   })
 
   const block = new BlockEncryption({
@@ -127,8 +117,8 @@ test('encryption provider can decrypt legacy', async t => {
     async get (id) {
       await Promise.resolve()
       if (id === -1) return blindingKey
-      if (id === 0) return legacyOpts
-      return { key: b4a.alloc(32, id) }
+      if (id === 0) return legacyKey
+      return b4a.alloc(32, id)
     }
   })
 

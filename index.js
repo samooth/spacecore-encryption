@@ -3,13 +3,8 @@ const ReadyResource = require('ready-resource')
 const c = require('compact-encoding')
 const b4a = require('b4a')
 
-const {
-  NS_LEGACY_ENCRYPTION,
-  NS_HASH_KEY,
-  LEGACY_KEY_ID,
-  BLINDING_KEY_ID,
-  BYPASS_KEY_ID
-} = require('./lib/caps.js')
+const LEGACY_KEY_ID = 0,
+const BYPASS_KEY_ID = 0xffffffff
 
 const nonce = b4a.alloc(sodium.crypto_stream_NONCEBYTES)
 const blindingNonce = b4a.alloc(sodium.crypto_stream_NONCEBYTES)
@@ -18,22 +13,11 @@ class LegacyProvider {
   static id = LEGACY_KEY_ID
   static padding = 8
 
-  constructor ({ encryptionKey, hypercoreKey, block = false, compat = true } = {}) {
-    const subKeys = b4a.alloc(2 * sodium.crypto_stream_KEYBYTES)
+  constructor (key) {
+    this.blockKey = key
+    this.blindingKey = b4a.allocUnsafe(sodium.crypto_stream_KEYBYTES)
 
-    this.key = encryptionKey
-    this.blockKey = block ? encryptionKey : subKeys.subarray(0, sodium.crypto_stream_KEYBYTES)
-    this.blindingKey = subKeys.subarray(sodium.crypto_stream_KEYBYTES)
-
-    this.isBlock = !!block
     this.padding = LegacyProvider.padding
-
-    this.compat = compat
-
-    if (!block) {
-      if (compat) sodium.crypto_generichash_batch(this.blockKey, [encryptionKey], hypercoreKey)
-      else sodium.crypto_generichash_batch(this.blockKey, [NS_LEGACY_ENCRYPTION, hypercoreKey, encryptionKey])
-    }
 
     sodium.crypto_generichash(this.blindingKey, this.blockKey)
   }
@@ -117,7 +101,7 @@ class EncryptionProvider {
   _decodeKeyId (padding) {
     this._blind(padding) // unblind
 
-    return c.uint32.deocde({ start: 0, end: 4, buffer: padding })
+    return c.uint32.decode({ start: 0, end: 4, buffer: padding })
   }
 
   _setNonce (index) {
@@ -141,7 +125,7 @@ class EncryptionProvider {
   }
 
   // reset padding state
-  _resetLegacy (padding) {
+  _resetLegacyPadding (padding) {
     nonce.fill(0, this.padding)
     this._blind(padding)
   }
@@ -158,16 +142,16 @@ class EncryptionProvider {
 
     const id = this._decodeKeyId(padding)
 
-    const opts = await this.host._get(id)
-    if (!opts) throw new Error('Decryption failed: unknown key')
+    const key = await this.host._get(id)
+    if (!key) throw new Error('Decryption failed: unknown key')
 
     // handle special cases
     switch (id) {
       case LegacyProvider.id: {
-        this._resetLegacy(padding)
+        this._resetLegacyPadding(padding)
         const block = raw.subarray(LegacyProvider.padding)
 
-        return LegacyProvider.decrypt(index, block, opts.encryptionKey)
+        return LegacyProvider.decrypt(index, block, key)
       }
 
       case BypassProvider.id:
@@ -178,7 +162,7 @@ class EncryptionProvider {
       block,
       block,
       nonce,
-      opts.key
+      key
     )
   }
 
@@ -255,10 +239,11 @@ class HypercoreEncryption extends ReadyResource {
       return this.load(LegacyProvider.id)
     }
 
-    const blindingKey = await this._get(BLINDING_KEY_ID)
-    if (!blindingKey) throw new Error('Blinding key must be provided')
+    const legacyKey = await this._get(LEGACY_KEY_ID)
+    if (!legacyKey) throw new Error('Blinding key must be provided')
 
-    this.blindingKey = blindingKey
+    this.blindingKey = b4a.allocUnsafe(sodium.crypto_stream_KEYBYTES)
+    sodium.crypto_generichash(this.blindingKey, legacyKey)
 
     const id = this._initialId
     if (id !== null) {
@@ -268,26 +253,26 @@ class HypercoreEncryption extends ReadyResource {
   }
 
   async load (id) {
-    const opts = await this._get(id)
-    if (!opts) throw new Error('Unrecognised encryption id')
+    const key = await this._get(id)
+    if (!key) throw new Error('Unrecognised encryption id')
 
     switch (id) {
       case LegacyProvider.id: {
-        this.provider = new LegacyProvider(opts)
+        this.provider = new LegacyProvider(key)
         break
       }
 
       case BypassProvider.id: {
-        this.provider = new BypassProvider(this, opts.key)
+        this.provider = new BypassProvider(this, key)
         break
       }
 
       default: {
         if (this.provider && this.provider instanceof EncryptionProvider) {
-          return this.provider.update(id, opts.key)
+          return this.provider.update(id, key)
         }
 
-        this.provider = new EncryptionProvider(this, id, opts.key)
+        this.provider = new EncryptionProvider(this, id, key)
         break
       }
     }
