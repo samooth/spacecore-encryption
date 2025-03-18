@@ -95,7 +95,6 @@ class EncryptionProvider {
     this.id = null
     this.key = null
     this.hashKey = null
-    this.blindingKey = host.blindingKey
 
     this.update(id, key)
   }
@@ -129,7 +128,7 @@ class EncryptionProvider {
       padding,
       padding,
       blindingNonce,
-      this.blindingKey
+      this.host.blindingKey
     )
   }
 
