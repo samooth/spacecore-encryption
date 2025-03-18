@@ -100,6 +100,8 @@ class EncryptionProvider {
   }
 
   update (id, key) {
+    if (id === this.id) return // todo: maybe check key is equivalent
+
     this.id = id
     this.key = key
 
