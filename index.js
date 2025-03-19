@@ -234,7 +234,7 @@ class HypercoreEncryption extends ReadyResource {
     this.blindingKey = null
     this.provider = null
 
-    this.keyId = opts.id !== undefined ? opts.id : null
+    this.keyId = opts.id !== undefined ? opts.id : -1
   }
 
   get padding () {
@@ -260,7 +260,7 @@ class HypercoreEncryption extends ReadyResource {
     this.blindingKey = b4a.allocUnsafe(sodium.crypto_stream_KEYBYTES)
     sodium.crypto_generichash(this.blindingKey, legacyKey)
 
-    if (this.keyId !== null) return this.load(this.keyId)
+    if (this.keyId !== -1) return this.load(this.keyId)
   }
 
   async load (id) {
