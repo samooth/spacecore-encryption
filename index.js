@@ -122,13 +122,14 @@ class BlockProvider {
 class HypercoreEncryption extends ReadyResource {
   static KEYBYTES = sodium.crypto_stream_KEYBYTES
 
-  constructor (opts = {}) {
+  constructor (blindingKey, opts = {}) {
     super()
+
+    this.blindingKey = blindingKey
 
     this.getBlockKey = opts.get
     this.compat = opts.compat === true
 
-    this.blindingKey = opts.blindingKey || null
     this.provider = null
 
     this.current = opts.id !== undefined
@@ -148,25 +149,13 @@ class HypercoreEncryption extends ReadyResource {
     return this.provider.blockKey
   }
 
-  get bootstrapped () {
-    return !!this.blindingKey
-  }
-
   async _open () {
     if (this.current !== null) return this.load(this.current.id)
   }
 
   async _get (id) {
-    const info = await this.getBlockKey(id, this.bootstrapped)
+    const info = await this.getBlockKey(id)
     if (!info) throw new Error('Unrecognised encryption id')
-
-    if (!this.bootstrapped && !info.blindingKey) {
-      throw new Error('Blinding key not provided')
-    }
-
-    if (!this.bootstrapped) {
-      this.blindingKey = info.blindingKey
-    }
 
     return info
   }
