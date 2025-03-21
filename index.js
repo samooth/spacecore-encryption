@@ -4,7 +4,7 @@ const ReadyResource = require('ready-resource')
 const c = require('compact-encoding')
 const b4a = require('b4a')
 
-const [NS_BLOCK_KEY, NS_HASH_KEY] = crypto.namespace('hypercore-block-encryption', 2)
+const [NS_BLOCK_KEY] = crypto.namespace('hypercore-block-encryption', 1)
 
 const TYPES = {
   LEGACY: 0,
@@ -32,39 +32,35 @@ class LegacyProvider {
   }
 
   encrypt (index, block, fork) {
+    return LegacyProvider.encrypt(index, block, fork, this.blockKey, this.blindingKey)
+  }
+
+  decrypt (index, block) {
+    return LegacyProvider.decrypt(index, block, this.blockKey)
+  }
+
+  static encrypt (index, block, fork, key, blindingKey) {
     const padding = block.subarray(0, this.padding)
     block = block.subarray(this.padding)
 
     c.uint64.encode({ start: 0, end: 8, buffer: padding }, fork)
     c.uint64.encode({ start: 0, end: 8, buffer: nonce }, index)
 
-    // Zero out any previous padding.
+    // Zero out any previous padding
     nonce.fill(0, 8)
+
+    if (!blindingKey) blindingKey = crypto.hash(key)
 
     // Blind the fork ID, possibly risking reusing the nonce on a reorg of the
     // Hypercore. This is fine as the blinding is best-effort and the latest
-    // fork ID shared on replication anyway.
-    sodium.crypto_stream_xor(
-      padding,
-      padding,
-      nonce,
-      this.blindingKey
-    )
+    // fork ID shared on replication anyway
+    encrypt(padding, nonce, blindingKey)
 
     nonce.set(padding, 8, 8 + padding.byteLength)
 
     // The combination of a (blinded) fork ID and a block index is unique for a
-    // given Hypercore and is therefore a valid nonce for encrypting the block.
-    sodium.crypto_stream_xor(
-      block,
-      block,
-      nonce,
-      this.blockKey
-    )
-  }
-
-  decrypt (index, block) {
-    return LegacyProvider.decrypt(index, block, this.blockKey)
+    // given Hypercore and is therefore a valid nonce for encrypting the block
+    encrypt(block, nonce, key)
   }
 
   static decrypt (index, block, key) {
@@ -76,13 +72,8 @@ class LegacyProvider {
     nonce.set(padding, 8)
     nonce.fill(0, 8 + padding.byteLength)
 
-    // Decrypt the block using the blinded fork ID.
-    sodium.crypto_stream_xor(
-      block,
-      block,
-      nonce,
-      key
-    )
+    // Decrypt the block using the blinded fork ID
+    decrypt(block, nonce, key)
   }
 }
 
@@ -90,36 +81,27 @@ class BlockProvider {
   static version = TYPES.BLOCK
   static padding = 16
 
-  constructor (host, id, key) {
-    this.isBlock = true
+  static encrypt (index, block, fork, keyInfo, blindingKey, id) {
+    const padding = block.subarray(0, this.padding)
+    block = block.subarray(this.padding)
 
-    this.host = host
+    // Unkeyed hash of block as we blind it later
+    sodium.crypto_generichash(padding, block)
 
-    this.id = null
-    this.key = null
-    this.hashKey = null
+    // Encode padding
+    c.uint32.encode({ start: 0, end: 4, buffer: padding }, keyInfo.id)
+    c.uint32.encode({ start: 4, end: 8, buffer: padding }, fork)
 
-    this.update(id, key)
-  }
+    setNonce(index)
 
-  update (id, key) {
-    if (id === this.id) return // todo: maybe check key is equivalent
+    // Blind key id, fork id and block hash
+    encrypt(padding, nonce, blindingKey)
 
-    this.id = id
-    this.key = key
+    nonce.set(padding, 8)
 
-    if (key) this.hashKey = deriveHashKey(id, key)
-  }
-
-  // blind the key id and fork id, possibly risking reusing the nonce on a reorg.
-  // chance is minimal since requires xsalsa20 collision of { keyId, forkId }
-  _blind (padding) {
-    sodium.crypto_stream_xor(
-      padding,
-      padding,
-      nonce,
-      this.host.blindingKey
-    )
+    // The combination of index, key id, fork id and block hash is very likely
+    // to be unique for a given Hypercore and therefore our nonce is suitable
+    encrypt(block, nonce, keyInfo.key)
   }
 
   static decrypt (index, block, key, paddingBytes) {
@@ -132,40 +114,8 @@ class BlockProvider {
 
     nonce.set(padding, 8)
 
-    sodium.crypto_stream_xor(
-      block,
-      block,
-      nonce,
-      key
-    )
-  }
-
-  encrypt (index, block, fork) {
-    if (this.key === null) throw new Error('No encryption has been loaded')
-
-    const padding = block.subarray(0, this.constructor.padding)
-    block = block.subarray(this.constructor.padding)
-
-    sodium.crypto_generichash(padding, block)
-
-    // encode padding
-    c.uint32.encode({ start: 0, end: 4, buffer: padding }, this.id)
-    c.uint32.encode({ start: 4, end: 8, buffer: padding }, fork)
-
-    setNonce(index)
-
-    this._blind(padding) // blind
-
-    nonce.set(padding, 8)
-
-    // The combination of a index and a fork id and block hash is unique for a
-    // given Hypercore and is therefore a valid nonce for encrypting the block.
-    sodium.crypto_stream_xor(
-      block,
-      block,
-      nonce,
-      this.key
-    )
+    // Decrypt the block using the full nonce
+    decrypt(block, nonce, key)
   }
 }
 
@@ -181,7 +131,9 @@ class HypercoreEncryption extends ReadyResource {
     this.blindingKey = opts.blindingKey || null
     this.provider = null
 
-    this.keyId = opts.id !== undefined ? opts.id : -1
+    this.current = opts.id !== undefined
+      ? { id: opts.id, version: -1, key: null, padding: -1 }
+      : null
   }
 
   get padding () {
@@ -201,52 +153,43 @@ class HypercoreEncryption extends ReadyResource {
   }
 
   async _open () {
-    if (this.keyId !== -1) return this.load(this.keyId)
+    if (this.current !== null) return this.load(this.current.id)
   }
 
-  async load (id) {
+  async _get (id) {
     const info = await this.getBlockKey(id, this.bootstrapped)
     if (!info) throw new Error('Unrecognised encryption id')
 
-    const { version, key, blindingKey } = info
-
-    if (!this.bootstrapped) {
-      if (!blindingKey) throw new Error('Blinding key not provided')
-      this.blindingKey = blindingKey
+    if (!this.bootstrapped && !info.blindingKey) {
+      throw new Error('Blinding key not provided')
     }
 
-    this.keyId = id
+    if (!this.bootstrapped) {
+      this.blindingKey = info.blindingKey
+    }
 
-    switch (version) {
-      case LegacyProvider.version: {
-        this.provider = new LegacyProvider(key)
-        break
-      }
+    return info
+  }
 
-      case BlockProvider.version: {
-        if (this.provider && this.provider instanceof BlockProvider) {
-          return this.provider.update(id, key)
-        }
+  async load (id) {
+    const info = await this._get(id)
 
-        this.provider = new BlockProvider(this, id, key)
-        break
-      }
+    this.current = {
+      id,
+      version: info.version,
+      key: info.key,
+      padding: info.padding
     }
   }
 
-  _getId (index, block) {
+  _parseId (index, block) {
     const id = b4a.alloc(4)
     id.set(block.subarray(0, 4))
 
     c.uint64.encode({ start: 0, end: 8, buffer: nonce }, index)
     nonce.fill(0, 8)
 
-    sodium.crypto_stream_xor(
-      id,
-      id,
-      nonce,
-      this.blindingKey
-    )
+    encrypt(id, nonce, this.blindingKey)
 
     return c.uint32.decode({ start: 0, end: 4, buffer: id })
   }
@@ -254,10 +197,8 @@ class HypercoreEncryption extends ReadyResource {
   async decrypt (index, block) {
     if (!this.opened) await this.ready()
 
-    const id = this._getId(index, block)
-
-    const info = await this.getBlockKey(id)
-    if (!info) throw new Error('Decryption failed: unknown key')
+    const id = this._parseId(index, block)
+    const info = await this._get(id)
 
     const { version, key, padding } = info
 
@@ -275,7 +216,19 @@ class HypercoreEncryption extends ReadyResource {
 
   async encrypt (index, block, fork) {
     if (!this.opened) await this.ready()
-    return this.provider.encrypt(index, block, fork)
+
+    if (this.current === null) {
+      throw new Error('Encryption provider has not been loaded')
+    }
+
+    switch (this.current.version) {
+      case LegacyProvider.version:
+        return LegacyProvider.encrypt(index, block, fork, this.current.key, this.blindingKey)
+
+      case BlockProvider.version: {
+        return BlockProvider.encrypt(index, block, fork, this.current, this.blindingKey)
+      }
+    }
   }
 
   static getBlockKey (hypercoreKey, encryptionKey) {
@@ -295,17 +248,22 @@ function getBlockKey (hypercoreKey, encryptionKey) {
   return key
 }
 
-function deriveHashKey (id, encryptionKey) {
-  const idBuffer = c.encode(c.uint, id)
-  const key = b4a.allocUnsafe(sodium.crypto_generichash_KEYBYTES)
-  sodium.crypto_generichash_batch(key, [NS_HASH_KEY, idBuffer], encryptionKey)
-
-  return key
-}
-
 function setNonce (index) {
   c.uint64.encode({ start: 0, end: 8, buffer: nonce }, index)
 
   // Zero out any previous padding.
   nonce.fill(0, 8)
+}
+
+function encrypt (block, nonce, key) {
+  sodium.crypto_stream_xor(
+    block,
+    block,
+    nonce,
+    key
+  )
+}
+
+function decrypt (block, nonce, key) {
+  return encrypt(block, nonce, key) // symmetric
 }
