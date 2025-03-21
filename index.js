@@ -132,6 +132,8 @@ class HypercoreEncryption extends ReadyResource {
 
     this.provider = null
 
+    this.keys = new Map()
+
     this.current = opts.id !== undefined
       ? { id: opts.id, version: -1, key: null, padding: -1 }
       : null
@@ -154,8 +156,12 @@ class HypercoreEncryption extends ReadyResource {
   }
 
   async _get (id) {
+    if (this.keys.has(id)) return this.keys.get(id)
+
     const info = await this.getBlockKey(id)
     if (!info) throw new Error('Unrecognised encryption id')
+
+    this.keys.set(id, info)
 
     return info
   }
