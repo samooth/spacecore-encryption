@@ -2,7 +2,6 @@ const sodium = require('sodium-universal')
 const crypto = require('hypercore-crypto')
 const ReadyResource = require('ready-resource')
 const c = require('compact-encoding')
-const assert = require('nanoassert')
 const b4a = require('b4a')
 
 const [NS_BLOCK_KEY] = crypto.namespace('hypercore-encryption', 1)
@@ -129,7 +128,6 @@ class HypercoreEncryption extends ReadyResource {
 
     this.blindingKey = blindingKey
     this.getBlockKey = getBlockKey // hook
-    this.compat = opts.compat !== false // default compat for now
 
     const id = opts.id === undefined ? -1 : opts.id
     this.current = { id, version: -1, key: null, padding: -1 }
@@ -163,11 +161,6 @@ class HypercoreEncryption extends ReadyResource {
     const info = await this.getBlockKey(id)
     if (!info) throw new Error('Unrecognised encryption id')
 
-    if (this.compat && id === 0) {
-      assert(info.version === LegacyProvider.version,
-        'Provided key is not legacy compatible')
-    }
-
     this.keys.set(id, info)
 
     return info
@@ -199,7 +192,7 @@ class HypercoreEncryption extends ReadyResource {
   async encrypt (index, block, fork) {
     if (!this.opened) await this.ready()
 
-    if (this.current === null) {
+    if (this.current === -1) {
       throw new Error('Encryption provider has not been loaded')
     }
 
@@ -211,6 +204,8 @@ class HypercoreEncryption extends ReadyResource {
         return BlockProvider.encrypt(index, block, fork, this.current, this.blindingKey)
       }
     }
+
+    throw new Error('Unknown encryption scheme')
   }
 
   async decrypt (index, block) {
