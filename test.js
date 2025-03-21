@@ -7,17 +7,7 @@ const HypercoreEncryption = require('./')
 test('basic', async t => {
   const blindingKey = b4a.alloc(32, b4a.from([0x12, 0x34]))
 
-  const block = new HypercoreEncryption(blindingKey, {
-    async get (id, bootstrapped) {
-      await Promise.resolve()
-
-      return {
-        version: 1,
-        padding: 16,
-        key: b4a.alloc(32, id)
-      }
-    }
-  })
+  const block = new HypercoreEncryption(blindingKey, getBlockKey)
 
   await block.ready()
   await block.load(1)
@@ -106,27 +96,7 @@ test('encryption provider can decrypt legacy', async t => {
 
   const legacy = HypercoreEncryption.createLegacyProvider(legacyKey)
 
-  const block = new HypercoreEncryption(blindingKey, {
-    id: 1,
-    async get (id) {
-      await Promise.resolve()
-
-      if (id === 0) {
-        return {
-          version: 0,
-          padding: 8,
-          key: legacyKey
-        }
-      }
-
-      return {
-        version: 1,
-        padding: 16,
-        key: b4a.alloc(32, id),
-        blindingKey
-      }
-    }
-  })
+  const block = new HypercoreEncryption(blindingKey, getBlockKey, { id: 1 })
 
   await block.ready()
 
@@ -168,3 +138,21 @@ test('encryption provider can decrypt legacy', async t => {
   t.alike(e2.subarray(legacy.padding), b2)
   t.alike(e3.subarray(block.padding), b3)
 })
+
+async function getBlockKey (id) {
+  await Promise.resolve()
+
+  if (id === 0) {
+    return {
+      version: 0,
+      padding: 8,
+      key: b4a.alloc(32, 0)
+    }
+  }
+
+  return {
+    version: 1,
+    padding: 16,
+    key: b4a.alloc(32, id)
+  }
+}
