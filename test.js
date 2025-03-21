@@ -1,4 +1,5 @@
 const test = require('brittle')
+const crypto = require('hypercore-crypto')
 const b4a = require('b4a')
 
 const HypercoreEncryption = require('./')
@@ -7,14 +8,14 @@ test('basic', async t => {
   const blindingKey = b4a.alloc(32, b4a.from([0x12, 0x34]))
 
   const block = new HypercoreEncryption({
-    async get (id) {
+    async get (id, bootstrapped) {
       await Promise.resolve()
-      if (id === -1) return blindingKey
 
       return {
         version: 1,
         padding: 16,
-        key: b4a.alloc(32, id)
+        key: b4a.alloc(32, id),
+        blindingKey: bootstrapped ? null : blindingKey
       }
     }
   })
@@ -107,8 +108,12 @@ test('encryption provider can decrypt legacy', async t => {
 
   const block = new HypercoreEncryption({
     id: 1,
-    async get (id) {
+    async get (id, bootstrapped) {
       await Promise.resolve()
+
+      const blindingKey = !bootstrapped
+        ? crypto.hash(legacyKey)
+        : null
 
       if (id === 0) {
         return {
@@ -121,7 +126,8 @@ test('encryption provider can decrypt legacy', async t => {
       return {
         version: 1,
         padding: 16,
-        key: b4a.alloc(32, id)
+        key: b4a.alloc(32, id),
+        blindingKey
       }
     }
   })

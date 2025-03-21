@@ -11,8 +11,6 @@ const TYPES = {
   BLOCK: 1
 }
 
-const LEGACY_KEY_ID = 0
-
 const nonce = b4a.allocUnsafe(sodium.crypto_stream_NONCEBYTES)
 
 class LegacyProvider {
@@ -180,7 +178,7 @@ class HypercoreEncryption extends ReadyResource {
     this.getBlockKey = opts.get
     this.compat = opts.compat === true
 
-    this.blindingKey = null
+    this.blindingKey = opts.blindingKey || null
     this.provider = null
 
     this.keyId = opts.id !== undefined ? opts.id : -1
@@ -198,25 +196,24 @@ class HypercoreEncryption extends ReadyResource {
     return this.provider.blockKey
   }
 
+  get bootstrapped () {
+    return !!this.blindingKey
+  }
+
   async _open () {
-    if (this.keyId === LegacyProvider.id) {
-      return this.load(LegacyProvider.id)
-    }
-
-    const legacyKey = await this.getBlockKey(LEGACY_KEY_ID)
-    if (!legacyKey) throw new Error('Blinding key must be provided')
-
-    this.blindingKey = b4a.allocUnsafe(sodium.crypto_stream_KEYBYTES)
-    sodium.crypto_generichash(this.blindingKey, legacyKey.key)
-
     if (this.keyId !== -1) return this.load(this.keyId)
   }
 
   async load (id) {
-    const info = await this.getBlockKey(id)
+    const info = await this.getBlockKey(id, this.bootstrapped)
     if (!info) throw new Error('Unrecognised encryption id')
 
-    const { version, key } = info
+    const { version, key, blindingKey } = info
+
+    if (!this.bootstrapped) {
+      if (!blindingKey) throw new Error('Blinding key not provided')
+      this.blindingKey = blindingKey
+    }
 
     this.keyId = id
 
