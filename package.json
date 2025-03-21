@@ -1,14 +1,17 @@
 {
-  "name": "hypercore-block-encryption",
+  "name": "hypercore-encryption",
   "version": "0.0.0",
   "main": "index.js",
   "scripts": {
     "test": "standard && brittle test.js"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "Holepunch",
+  "license": "Apache-2.0",
   "description": "Block encryption provider for hypercore",
+  "files": [
+    "index.js"
+  ],
   "repository": {
     "type": "git",
     "url": "git+ssh://git@github.com/holepunchto/hypercore-block-encryption.git"

@@ -4,7 +4,7 @@ const ReadyResource = require('ready-resource')
 const c = require('compact-encoding')
 const b4a = require('b4a')
 
-const [NS_BLOCK_KEY] = crypto.namespace('hypercore-block-encryption', 1)
+const [NS_BLOCK_KEY] = crypto.namespace('hypercore-encryption', 1)
 
 const TYPES = {
   LEGACY: 0,
@@ -224,6 +224,12 @@ class HypercoreEncryption extends ReadyResource {
         return BlockProvider.encrypt(index, block, fork, this.current, this.blindingKey)
       }
     }
+  }
+
+  static isHypercoreEncryption (enc) {
+    if (enc instanceof HypercoreEncryption) return true
+    if (enc instanceof LegacyProvider) return true
+    return false
   }
 
   static getBlockKey (hypercoreKey, encryptionKey) {
