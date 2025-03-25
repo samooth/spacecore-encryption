@@ -129,22 +129,23 @@ class HypercoreEncryption extends ReadyResource {
     this.blindingKey = blindingKey
     this.getBlockKey = getBlockKey // hook
 
-    const id = opts.id === undefined ? -1 : opts.id
-    this.current = { id, version: -1, key: null, padding: -1 }
-
     this.keys = new Map()
+    this.preopen = opts.preopen || null
+
+    this.current = {
+      id: -1,
+      version: -1,
+      key: null,
+      padding: 0
+    }
   }
 
   get padding () {
-    return this.current ? this.current.padding : -1
+    return this.current ? this.current.padding : 0
   }
 
   get seekable () {
     return this.padding !== 0
-  }
-
-  get id () {
-    return this.current ? this.current.id : -1
   }
 
   get version () {
@@ -152,18 +153,9 @@ class HypercoreEncryption extends ReadyResource {
   }
 
   async _open () {
-    if (this.current !== null) return this.load(this.current.id)
-  }
-
-  async _get (id) {
-    if (this.keys.has(id)) return this.keys.get(id)
-
-    const info = await this.getBlockKey(id)
-    if (!info) throw new Error('Unrecognised encryption id')
-
-    this.keys.set(id, info)
-
-    return info
+    if (!this.preopen) return
+    const id = await this.preopen
+    if (id !== -1) return this.load(id)
   }
 
   async load (id) {
@@ -175,6 +167,17 @@ class HypercoreEncryption extends ReadyResource {
       key: info.key,
       padding: info.padding
     }
+  }
+
+  async _get (id) {
+    if (this.keys.has(id)) return this.keys.get(id)
+
+    const info = await this.getBlockKey(id)
+    if (!info) throw new Error('Unrecognised encryption id')
+
+    this.keys.set(id, info)
+
+    return info
   }
 
   _parseId (index, block) {
