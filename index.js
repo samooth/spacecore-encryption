@@ -195,7 +195,7 @@ class HypercoreEncryption extends ReadyResource {
   async encrypt (index, block, fork) {
     if (!this.opened) await this.ready()
 
-    if (this.current === -1) {
+    if (this.current.id === -1) {
       throw new Error('Encryption provider has not been loaded')
     }
 
