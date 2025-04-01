@@ -96,7 +96,7 @@ test('encryption provider can decrypt legacy', async t => {
 
   const legacy = HypercoreEncryption.createLegacyProvider(legacyKey)
 
-  const block = new HypercoreEncryption(blindingKey, getBlockKey, { id: 1 })
+  const block = new HypercoreEncryption(blindingKey, getBlockKey, { preopen: Promise.resolve(1) })
 
   await block.ready()
 
