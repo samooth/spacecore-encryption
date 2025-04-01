@@ -17,7 +17,9 @@ async function get (id) {
   }
 }
 
-const encryption = new HypercoreEncryption(blindingKey, get, { id: 1 })
+const encryption = new HypercoreEncryption(blindingKey, get, {
+  preopen: Promise.resolve(1) // optionally pass for initial id
+})
 
 const core = new Hypercore(storage, { encryption })
 await core.ready()
@@ -31,9 +33,9 @@ await core.append('encrypt with key 99')
 
 ## API
 
-#### `const enc = new HypercoreEncryption(blindingKey, getBlockKey, { id, compat = true })`
+#### `const enc = new HypercoreEncryption(blindingKey, getBlockKey, { promise })`
 
-Instantiate a new encryption provider. Optionally pass the initial key id as `id`. Set `compat` to `false` if legacy encryption does not need to be supported.
+Instantiate a new encryption provider. Optionally pass a `preopen` promise that resolves to a key id to be loaded initially.
 
 Provide a hook with the signature:
 ```js
