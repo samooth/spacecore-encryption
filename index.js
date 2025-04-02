@@ -246,7 +246,7 @@ class HypercoreEncryption extends ReadyResource {
   }
 
   static encrypt (index, block, fork, version, id, key, blindingKey) {
-    switch (this.current.version) {
+    switch (version) {
       case LegacyProvider.version:
         return LegacyProvider.encrypt(index, block, fork, key, blindingKey)
 
