@@ -82,7 +82,7 @@ class BlockProvider {
   static version = TYPES.BLOCK
   static padding = 16
 
-  static encrypt (index, block, fork, keyInfo, blindingKey, id) {
+  static encrypt (index, block, fork, id, key, blindingKey) {
     const padding = block.subarray(0, this.padding)
     block = block.subarray(this.padding)
 
@@ -90,7 +90,7 @@ class BlockProvider {
     sodium.crypto_generichash(padding, block)
 
     // Encode padding
-    c.uint32.encode({ start: 0, end: 4, buffer: padding }, keyInfo.id)
+    c.uint32.encode({ start: 0, end: 4, buffer: padding }, id)
     c.uint32.encode({ start: 4, end: 8, buffer: padding }, fork)
 
     setNonce(index)
@@ -102,7 +102,7 @@ class BlockProvider {
 
     // The combination of index, key id, fork id and block hash is very likely
     // to be unique for a given Hypercore and therefore our nonce is suitable
-    encrypt(block, nonce, keyInfo.key)
+    encrypt(block, nonce, key)
   }
 
   static decrypt (index, block, key, paddingBytes) {
@@ -204,7 +204,7 @@ class HypercoreEncryption extends ReadyResource {
         return LegacyProvider.encrypt(index, block, fork, this.current.key, this.blindingKey)
 
       case BlockProvider.version: {
-        return BlockProvider.encrypt(index, block, fork, this.current, this.blindingKey)
+        return BlockProvider.encrypt(index, block, fork, this.current.id, this.current.key, this.blindingKey)
       }
     }
 
@@ -243,6 +243,19 @@ class HypercoreEncryption extends ReadyResource {
 
   static createLegacyProvider (blockKey) {
     return new LegacyProvider(blockKey)
+  }
+
+  static encrypt (index, block, fork, version, id, key, blindingKey) {
+    switch (this.current.version) {
+      case LegacyProvider.version:
+        return LegacyProvider.encrypt(index, block, fork, key, blindingKey)
+
+      case BlockProvider.version: {
+        return BlockProvider.encrypt(index, block, fork, id, key, blindingKey)
+      }
+    }
+
+    throw new Error('Unknown encryption scheme')
   }
 }
 
