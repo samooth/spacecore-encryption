@@ -1,11 +1,11 @@
 const sodium = require('sodium-universal')
 const crypto = require('hypercore-crypto')
-const ReadyResource = require('ready-resource')
 const c = require('compact-encoding')
 const b4a = require('b4a')
 
 const [NS_BLOCK_KEY] = crypto.namespace('hypercore-encryption', 1)
 
+const LEGACY_MANIFEST_VERSION = 1
 const TYPES = {
   LEGACY: 0,
   BLOCK: 1
@@ -16,29 +16,6 @@ const nonce = b4a.allocUnsafe(sodium.crypto_stream_NONCEBYTES)
 class LegacyProvider {
   static version = TYPES.LEGACY
   static padding = 8
-
-  constructor (blockKey) {
-    this.blockKey = blockKey
-    this.blindingKey = b4a.allocUnsafe(sodium.crypto_stream_KEYBYTES)
-
-    this.seekable = true
-    this.padding = LegacyProvider.padding
-    this.version = LegacyProvider.version
-
-    sodium.crypto_generichash(this.blindingKey, this.blockKey)
-  }
-
-  ready () {
-    // api compat
-  }
-
-  encrypt (index, block, fork) {
-    return LegacyProvider.encrypt(index, block, fork, this.blockKey, this.blindingKey)
-  }
-
-  decrypt (index, block) {
-    return LegacyProvider.decrypt(index, block, this.blockKey)
-  }
 
   static encrypt (index, block, fork, key, blindingKey) {
     const padding = block.subarray(0, this.padding)
@@ -105,9 +82,7 @@ class BlockProvider {
     encrypt(block, nonce, key)
   }
 
-  static decrypt (index, block, key, paddingBytes) {
-    if (paddingBytes !== this.padding) throw new Error('Unsupported padding')
-
+  static decrypt (index, block, key) {
     const padding = block.subarray(0, this.padding)
     block = block.subarray(this.padding)
 
@@ -120,64 +95,63 @@ class BlockProvider {
   }
 }
 
-class HypercoreEncryption extends ReadyResource {
+class HypercoreEncryption {
   static KEYBYTES = sodium.crypto_stream_KEYBYTES
 
-  constructor (blindingKey, getBlockKey, opts = {}) {
-    super()
-
-    this.blindingKey = blindingKey
-    this.getBlockKey = getBlockKey // hook
-
+  constructor (opts = {}) {
+    this.blindingKey = opts.blindingKey || null
+    this.current = null
     this.keys = new Map()
-    this.preopen = opts.preopen || null
 
-    this.current = {
-      id: -1,
-      version: -1,
-      key: null,
-      padding: 0
+    if (opts.getBlockKey) {
+      this._getBlockKey = opts.getBlockKey
+    }
+
+    if (opts.getBlindingKey) {
+      this._getBlindingKey = opts.getBlindingKey
     }
   }
 
-  get padding () {
-    return this.current ? this.current.padding : 0
-  }
-
   get seekable () {
-    return this.padding !== 0
+    return true
   }
 
   get version () {
     return this.current ? this.current.version : -1
   }
 
-  async _open () {
-    if (!this.preopen) return
-    const id = await this.preopen
-    if (id !== -1) return this.load(id)
+  isLegacy (ctx) {
+    return !!(ctx && ctx.manifest && ctx.manifest.version <= LEGACY_MANIFEST_VERSION)
   }
 
-  async load (id) {
-    const info = await this._get(id)
-
-    this.current = {
-      id,
-      version: info.version,
-      key: info.key,
-      padding: info.padding
-    }
+  async load (id, ctx) {
+    this.current = await this._get(id, ctx)
   }
 
-  async _get (id) {
+  async _get (id, ctx) {
     if (this.keys.has(id)) return this.keys.get(id)
 
-    const info = await this.getBlockKey(id)
-    if (!info) throw new Error('Unrecognised encryption id')
+    const info = await this._getBlockKey(id, ctx)
+    if (!info) return null
 
-    this.keys.set(id, info)
+    this.keys.set(info.id, info)
 
     return info
+  }
+
+  _ensureBlindingKey (ctx) {
+    if (!this.blindingKey) this.blindingKey = this._getBlindingKey(ctx)
+    if (!this.blindingKey) throw new Error('No blinding key available')
+  }
+
+  _getBlockKey () {
+    // must be providede by user
+    throw new Error('Not implemented')
+  }
+
+  _getBlindingKey () {
+    // must be providede by user
+    throw new Error('Not implemented')
   }
 
   _parseId (index, block) {
@@ -192,17 +166,34 @@ class HypercoreEncryption extends ReadyResource {
     return c.uint32.decode({ start: 0, end: 4, buffer: id })
   }
 
-  async encrypt (index, block, fork) {
-    if (!this.opened) await this.ready()
+  padding (ctx) {
+    if (ctx && ctx.manifest && ctx.manifest.version <= LEGACY_MANIFEST_VERSION) {
+      return LegacyProvider.padding
+    }
 
-    if (this.current.id === -1) {
+    if (ctx && ctx.manifest) {
+      return BlockProvider.padding
+    }
+
+    return 0
+  }
+
+  async encrypt (index, block, fork, ctx) {
+    if (this.current === null) {
+      await this.load(-1, ctx)
+    }
+
+    if (this.current === null) {
       throw new Error('Encryption provider has not been loaded')
     }
 
-    switch (this.current.version) {
-      case LegacyProvider.version:
-        return LegacyProvider.encrypt(index, block, fork, this.current.key, this.blindingKey)
+    this._ensureBlindingKey(ctx)
 
+    if (this.isLegacy(ctx)) {
+      return LegacyProvider.encrypt(index, block, fork, this.current.key, this.blindingKey)
+    }
+
+    switch (this.current.version) {
       case BlockProvider.version: {
         return BlockProvider.encrypt(index, block, fork, this.current.id, this.current.key, this.blindingKey)
       }
@@ -211,51 +202,39 @@ class HypercoreEncryption extends ReadyResource {
     throw new Error('Unknown encryption scheme')
   }
 
-  async decrypt (index, block) {
-    if (!this.opened) await this.ready()
+  async decrypt (index, block, ctx) {
+    if (this.isLegacy(ctx)) {
+      const info = await this._get(0, ctx)
+      if (!info) throw new Error('No legacy key available')
+
+      return LegacyProvider.decrypt(index, block, info.key)
+    }
+
+    this._ensureBlindingKey(ctx)
 
     const id = this._parseId(index, block)
-    const info = await this._get(id)
 
-    const { version, key, padding } = info
+    const info = await this._get(id, ctx)
+    if (!info) throw new Error('Unknown encryption id')
+
+    const { version, key } = info
 
     switch (version) {
       case LegacyProvider.version:
+        // beware: only safe to use new encryption
+        // on old data if the core has NEVER forked
         return LegacyProvider.decrypt(index, block, key)
 
       case BlockProvider.version:
-        return BlockProvider.decrypt(index, block, key, padding)
+        return BlockProvider.decrypt(index, block, key)
 
       default:
         throw new Error('Unrecognised version')
     }
   }
 
-  static isHypercoreEncryption (enc) {
-    if (enc instanceof HypercoreEncryption) return true
-    if (enc instanceof LegacyProvider) return true
-    return false
-  }
-
   static getBlockKey (hypercoreKey, encryptionKey) {
     return getBlockKey(hypercoreKey, encryptionKey)
-  }
-
-  static createLegacyProvider (blockKey) {
-    return new LegacyProvider(blockKey)
-  }
-
-  static encrypt (index, block, fork, version, id, key, blindingKey) {
-    switch (version) {
-      case LegacyProvider.version:
-        return LegacyProvider.encrypt(index, block, fork, key, blindingKey)
-
-      case BlockProvider.version: {
-        return BlockProvider.encrypt(index, block, fork, id, key, blindingKey)
-      }
-    }
-
-    throw new Error('Unknown encryption scheme')
   }
 }
 
