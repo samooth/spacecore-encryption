@@ -1,9 +1,9 @@
 const sodium = require('sodium-universal')
-const crypto = require('hypercore-crypto')
+const crypto = require('spacecore-crypto')
 const c = require('compact-encoding')
 const b4a = require('b4a')
 
-const [NS_BLOCK_KEY] = crypto.namespace('hypercore-encryption', 1)
+const [NS_BLOCK_KEY] = crypto.namespace('spacecore-encryption', 1)
 
 const LEGACY_MANIFEST_VERSION = 1
 const TYPES = {

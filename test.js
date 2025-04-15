@@ -1,13 +1,13 @@
 const test = require('brittle')
-const crypto = require('hypercore-crypto')
+const crypto = require('spacecore-crypto')
 const b4a = require('b4a')
 
-const HypercoreEncryption = require('./')
+const SpacecoreEncryption = require('./')
 
 test('basic', async t => {
   const blindingKey = b4a.alloc(32, b4a.from([0x12, 0x34]))
 
-  const block = new HypercoreEncryption({
+  const block = new SpacecoreEncryption({
     getBlockKey,
     getBlindingKey: () => blindingKey
   })
@@ -58,7 +58,7 @@ test('legacy', async t => {
   const key = b4a.alloc(32, 0)
   const blindingKey = crypto.hash(key)
 
-  const block = new HypercoreEncryption({
+  const block = new SpacecoreEncryption({
     getBlockKey,
     getBlindingKey: () => blindingKey
   })
@@ -100,12 +100,12 @@ test('encryption provider can decrypt legacy', async t => {
   const legacyKey = b4a.alloc(32, 0)
   const blindingKey = crypto.hash(legacyKey)
 
-  const legacy = new HypercoreEncryption({
+  const legacy = new SpacecoreEncryption({
     getBlockKey,
     getBlindingKey: () => blindingKey
   })
 
-  const block = new HypercoreEncryption({
+  const block = new SpacecoreEncryption({
     getBlockKey,
     getBlindingKey: () => blindingKey
   })
@@ -158,7 +158,7 @@ test('encryption provider can decrypt legacy', async t => {
 })
 
 test('sub class', async t => {
-  class ContextEncryption extends HypercoreEncryption {
+  class ContextEncryption extends SpacecoreEncryption {
     constructor (opts = {}) {
       super(opts)
     }
