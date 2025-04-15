@@ -1,13 +1,13 @@
-# hypercore-encryption
+# spacecore-encryption
 
-Dyanmic Hypercore encryption provider
+Dyanmic Spacercore encryption provider
 
 ## Usage
 
 ```js
-const HypercoreEncryption = require('hypercore-encryption')
+const SpacecoreEncryption = require('spacecore-encryption')
 
-const encryption = new HypercoreEncryption({
+const encryption = new SpacecoreEncryption({
   blindingKey,
   getBlockKey (id, contexxt) {
     // get key info corresponding to id and context...
@@ -20,7 +20,7 @@ const encryption = new HypercoreEncryption({
   }
 })
 
-const core = new Hypercore(storage, { encryption })
+const core = new Spacecore(storage, { encryption })
 await core.ready()
 
 await core.append('encrypt with key 1')
@@ -32,7 +32,7 @@ await core.append('encrypt with key 99')
 
 ## API
 
-#### `const enc = new HypercoreEncryption({ blindingKey, getBlockKey, getBlindingKey })`
+#### `const enc = new SpacecoreEncryption({ blindingKey, getBlockKey, getBlindingKey })`
 
 Instantiate a new encryption provider. Optionally pass a `preopen` promise that resolves to a key id to be loaded initially.
 
@@ -82,7 +82,7 @@ Encrypt a block in place.
 
 Decrypt a block in place.
 
-#### `const blockKey = HypercoreEncryption.getBlockKey(hypercoreKey, encryptionKey)`
+#### `const blockKey = SpacecoreEncryption.getBlockKey(spacecoreKey, encryptionKey)`
 
 Helper to generate namespaced block keys.
 

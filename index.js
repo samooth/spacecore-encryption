@@ -30,14 +30,14 @@ class LegacyProvider {
     if (!blindingKey) blindingKey = crypto.hash(key)
 
     // Blind the fork ID, possibly risking reusing the nonce on a reorg of the
-    // Hypercore. This is fine as the blinding is best-effort and the latest
+    // Spacecore. This is fine as the blinding is best-effort and the latest
     // fork ID shared on replication anyway
     encrypt(padding, nonce, blindingKey)
 
     nonce.set(padding, 8, 8 + padding.byteLength)
 
     // The combination of a (blinded) fork ID and a block index is unique for a
-    // given Hypercore and is therefore a valid nonce for encrypting the block
+    // given Spacecore and is therefore a valid nonce for encrypting the block
     encrypt(block, nonce, key)
   }
 
@@ -78,7 +78,7 @@ class BlockProvider {
     nonce.set(padding, 8)
 
     // The combination of index, key id, fork id and block hash is very likely
-    // to be unique for a given Hypercore and therefore our nonce is suitable
+    // to be unique for a given Spacecore and therefore our nonce is suitable
     encrypt(block, nonce, key)
   }
 
@@ -95,7 +95,7 @@ class BlockProvider {
   }
 }
 
-class HypercoreEncryption {
+class SpacecoreEncryption {
   static KEYBYTES = sodium.crypto_stream_KEYBYTES
 
   constructor (opts = {}) {
@@ -233,16 +233,16 @@ class HypercoreEncryption {
     }
   }
 
-  static getBlockKey (hypercoreKey, encryptionKey) {
-    return getBlockKey(hypercoreKey, encryptionKey)
+  static getBlockKey (spacecoreKey, encryptionKey) {
+    return getBlockKey(spacecoreKey, encryptionKey)
   }
 }
 
-module.exports = HypercoreEncryption
+module.exports = SpacecoreEncryption
 
-function getBlockKey (hypercoreKey, encryptionKey) {
+function getBlockKey (spacecoreKey, encryptionKey) {
   const key = b4a.allocUnsafe(sodium.crypto_stream_KEYBYTES)
-  sodium.crypto_generichash_batch(key, [NS_BLOCK_KEY, hypercoreKey, encryptionKey])
+  sodium.crypto_generichash_batch(key, [NS_BLOCK_KEY, spacecoreKey, encryptionKey])
   return key
 }
 
